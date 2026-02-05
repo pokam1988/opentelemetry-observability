@@ -224,13 +224,12 @@ jobs:
         PROMETHEUS_ROUTE=$(oc get route prometheus -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.spec.host}' 2>/dev/null || echo "Not exposed")
         echo "| Prometheus | https://$PROMETHEUS_ROUTE |" >> $GITHUB_STEP_SUMMARY
 
-  # Deploy with ArgoCD
-  deploy-argocd:
+  # Deploy with Helm directly
+  deploy-helm:
     runs-on: ubuntu-latest
-    name: Deploy with ArgoCD
+    name: Deploy with Helm
     needs: [validate, security]
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    environment: argocd
     
     steps:
     - name: Checkout code
@@ -260,81 +259,21 @@ jobs:
         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
         helm repo add jaeger https://jaegertracing.github.io/helm-charts
         helm repo add opensearch https://opensearch-project.github.io/helm-charts
-        helm repo add argoproj https://argoproj.github.io/argo-helm
         helm repo update
         
-    - name: Install ArgoCD using Helm
+    - name: Deploy OpenTelemetry Demo with Helm
       run: |
-        echo "Installing ArgoCD..."
-        helm upgrade --install argocd argoproj/argo-cd \
-          --namespace argocd \
+        echo "Deploying OpenTelemetry Demo to ${{ env.OPENSHIFT_NAMESPACE }}..."
+        helm upgrade --install ${{ env.APP_NAME }} ${{ env.CHART_PATH }} \
+          --namespace ${{ env.OPENSHIFT_NAMESPACE }} \
           --create-namespace \
-          --set server.insecure=true \
-          --set server.service.type=ClusterIP \
+          -f ${{ env.VALUES_FILE }} \
           --wait --timeout=10m
         
-    - name: Create ArgoCD Application for OpenTelemetry Demo
+    - name: Verify Helm Deployment
       run: |
-        echo "Creating ArgoCD Application resource..."
-        cat > /tmp/otel-argocd-app.yaml <<'EOF'
-        apiVersion: argoproj.io/v1alpha1
-        kind: Application
-        metadata:
-          name: otel-demo
-          namespace: argocd
-        spec:
-          project: default
-          source:
-            repoURL: ${{ github.repositoryUrl }}
-            targetRevision: ${{ github.ref_name }}
-            path: charts/opentelemetry-demo
-            helm:
-              valueFiles:
-              - ocp-values.yaml
-          destination:
-            server: https://kubernetes.default.svc
-            namespace: ${{ env.OPENSHIFT_NAMESPACE }}
-          syncPolicy:
-            automated:
-              prune: true
-              selfHeal: true
-            syncOptions:
-            - CreateNamespace=true
-            retry:
-              limit: 5
-              backoff:
-                duration: 5s
-                factor: 2
-                maxDuration: 1m
-        EOF
-
-        oc apply -f /tmp/otel-argocd-app.yaml
-        
-    - name: Wait for ArgoCD Application to sync
-      run: |
-        echo "Waiting for ArgoCD to sync application..."
-        for i in {1..30}; do
-          STATUS=$(oc get application otel-demo -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "")
-          HEALTH=$(oc get application otel-demo -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
-          echo "Sync Status: $STATUS | Health: $HEALTH"
-          if [ "$HEALTH" = "Healthy" ]; then
-            echo "✅ Application is healthy!"
-            break
-          fi
-          if [ $i -lt 30 ]; then
-            sleep 10
-          fi
-        done
-        
-    - name: Verify ArgoCD Application
-      run: |
-        echo "Verifying ArgoCD Application deployment..."
-        echo "Application Details:"
-        oc get application otel-demo -n argocd -o yaml
-        
-        echo ""
-        echo "Application Status:"
-        oc get application otel-demo -n argocd -o jsonpath='{.status}' | jq .
+        echo "Verifying Helm deployment..."
+        helm status ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }}
         
         echo ""
         echo "Deployed Resources:"
@@ -370,18 +309,18 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     name: Notify Deployment Status
-    needs: [deploy-dev]
+    needs: [deploy-helm]
     if: always()
     
     steps:
     - name: Notify Success
-      if: needs.deploy-dev.result == 'success'
+      if: needs.deploy-helm.result == 'success'
       run: |
         echo "✅ Deployment completed successfully!"
         echo "OpenTelemetry Demo is now running in the development environment."
         
     - name: Notify Failure
-      if: needs.deploy-dev.result == 'failure'
+      if: needs.deploy-helm.result == 'failure'
       run: |
         echo "❌ Deployment failed!"
         echo "Please check the logs and retry the deployment."
