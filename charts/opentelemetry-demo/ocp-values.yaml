@@ -172,9 +172,9 @@ components:
   # # This will be applied at pod level, can be applied globally for all pods: .Values.default.podSecurityContext
   # # Or it can be applied to a specific component: .Values.components.<component-name>.podSecurityContext
   #    podSecurityContext:
-  #      runAsGroup: 1012310000
+  #      runAsGroup: 1013590000
   #      runAsNonRoot: true
-  #      runAsUser: 1012310000
+  #      runAsUser: 1013590000
 
   accounting:
     enabled: false
@@ -375,7 +375,7 @@ components:
       - name: WEB_OTEL_SERVICE_NAME
         value: frontend-web
       - name: PUBLIC_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-        value: https://frontend-proxy-valaise16-dev.apps.rm3.7wse.p1.openshiftapps.com/otlp-http/v1/traces
+        value: https://frontend-proxy-pokam-dev.apps.rm3.7wse.p1.openshiftapps.com/otlp-http/v1/traces
     resources:
       limits:
         memory: 250Mi
@@ -387,7 +387,7 @@ components:
         route.openshift.io/termination: "edge"
         route.openshift.io/insecureEdgeTerminationPolicy: "Redirect"   
       hosts:
-        - host: frontend-valaise16-dev.apps.rm3.7wse.p1.openshiftapps.com
+        - host: frontend-pokam-dev.apps.rm3.7wse.p1.openshiftapps.com
           paths:
             - path: /
               pathType: Prefix
@@ -463,7 +463,7 @@ components:
         route.openshift.io/termination: "edge"
         route.openshift.io/insecureEdgeTerminationPolicy: "Redirect"   
       hosts:
-        - host: frontend-proxy-valaise16-dev.apps.rm3.7wse.p1.openshiftapps.com
+        - host: frontend-proxy-pokam-dev.apps.rm3.7wse.p1.openshiftapps.com
           paths:
             - path: /
               pathType: Prefix
@@ -831,9 +831,9 @@ opentelemetry-collector:
   fullnameOverride: otel-collector
   mode: deployment
   securityContext:
-    runAsUser: 1012310000
+    runAsUser: 1013590000
     runAsNonRoot: true
-    runAsGroup: 1012310000
+    runAsGroup: 1013590000
   presets:
     kubernetesAttributes:
       enabled: false
@@ -1012,7 +1012,7 @@ prometheus:
       subjects:
         - kind: ServiceAccount
           name: prometheus
-          namespace: valaise16-dev
+          namespace: pokam-dev
       roleRef:
         apiGroup: rbac.authorization.k8s.io
         kind: ClusterRole
@@ -1082,7 +1082,7 @@ prometheus:
         route.openshift.io/termination: "edge"
         route.openshift.io/insecureEdgeTerminationPolicy: "Redirect"   
       hosts:
-        - prometheus-valaise16-dev.apps.rm3.7wse.p1.openshiftapps.com
+        - prometheus-pokam-dev.apps.rm3.7wse.p1.openshiftapps.com
       tls: []
     fullnameOverride: prometheus
     extraFlags:
@@ -1145,9 +1145,9 @@ grafana:
   enabled: true
   securityContext:
     runAsNonRoot: true
-    runAsUser: 1012310000
-    runAsGroup: 1012310000
-    fsGroup: 1012310000
+    runAsUser: 1013590000
+    runAsGroup: 1013590000
+    fsGroup: 1013590000
   ingress:
     enabled: true
     annotations:
@@ -1156,7 +1156,7 @@ grafana:
       route.openshift.io/insecureEdgeTerminationPolicy: "Redirect"   
 
     hosts:
-      - grafana-valaise16-dev.apps.rm3.7wse.p1.openshiftapps.com
+      - grafana-pokam-dev.apps.rm3.7wse.p1.openshiftapps.com
     paths:
       - path: /
         pathType: Prefix
@@ -1312,10 +1312,10 @@ grafana:
 tempo:
   enabled: true
   securityContext:
-    runAsUser: 1012310000
+    runAsUser: 1013590000
     runAsNonRoot: true
-    runAsGroup: 1012310000
-    fsGroup: 1012310000
+    runAsGroup: 1013590000
+    fsGroup: 1013590000
   fullnameOverride: tempo
   tempo:
     containerSecurityContext:
