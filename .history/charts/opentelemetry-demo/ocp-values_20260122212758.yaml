@@ -172,9 +172,9 @@ components:
   # # This will be applied at pod level, can be applied globally for all pods: .Values.default.podSecurityContext
   # # Or it can be applied to a specific component: .Values.components.<component-name>.podSecurityContext
   #    podSecurityContext:
-  #      runAsGroup: 1016890000
+  #      runAsGroup: 1013590000
   #      runAsNonRoot: true
-  #      runAsUser: 1016890000
+  #      runAsUser: 1013590000
 
   accounting:
     enabled: false
@@ -831,9 +831,9 @@ opentelemetry-collector:
   fullnameOverride: otel-collector
   mode: deployment
   securityContext:
-    runAsUser: 1016890000
+    runAsUser: 1013590000
     runAsNonRoot: true
-    runAsGroup: 1016890000
+    runAsGroup: 1013590000
   presets:
     kubernetesAttributes:
       enabled: false
@@ -1145,9 +1145,9 @@ grafana:
   enabled: true
   securityContext:
     runAsNonRoot: true
-    runAsUser: 1016890000
-    runAsGroup: 1016890000
-    fsGroup: 1016890000
+    runAsUser: 1013590000
+    runAsGroup: 1013590000
+    fsGroup: 1013590000
   ingress:
     enabled: true
     annotations:
@@ -1312,10 +1312,10 @@ grafana:
 tempo:
   enabled: true
   securityContext:
-    runAsUser: 1016890000
+    runAsUser: 1013590000
     runAsNonRoot: true
-    runAsGroup: 1016890000
-    fsGroup: 1016890000
+    runAsGroup: 1013590000
+    fsGroup: 1013590000
   fullnameOverride: tempo
   tempo:
     containerSecurityContext:
