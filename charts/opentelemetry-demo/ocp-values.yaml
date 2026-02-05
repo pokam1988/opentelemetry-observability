@@ -36,11 +36,11 @@ default:
   # Default securityContext for all components
   securityContext:
     runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
     allowPrivilegeEscalation: false
     capabilities:
       drop: ["ALL"]
-    seccompProfile:
-      type: RuntimeDefault
   # Default pod security context for all components
   podSecurityContext:
     runAsNonRoot: true
