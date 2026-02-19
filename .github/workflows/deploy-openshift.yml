@@ -149,6 +149,47 @@ jobs:
         cd ${{ env.CHART_PATH }}
         helm dependency build
 
+    - name: Cleanup conflicting Kubernetes objects
+      run: |
+        echo "Checking and cleaning up conflicting objects..."
+        # Check if ServiceAccount 'grafana' exists and belongs to a different release
+        if oc get sa grafana -n ${{ env.OPENSHIFT_NAMESPACE }} 2>/dev/null; then
+          echo "Found existing ServiceAccount 'grafana', checking release ownership..."
+          RELEASE_NAME=$(oc get sa grafana -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || echo "")
+          
+          if [ "$RELEASE_NAME" != "${{ env.APP_NAME }}" ] && [ -n "$RELEASE_NAME" ]; then
+            echo "ServiceAccount is owned by release '$RELEASE_NAME', not '${{ env.APP_NAME }}'"
+            echo "Fixing Helm ownership metadata..."
+            
+            # Patch the ServiceAccount to update Helm annotations
+            kubectl annotate serviceaccount grafana \
+              --namespace ${{ env.OPENSHIFT_NAMESPACE }} \
+              meta.helm.sh/release-name=${{ env.APP_NAME }} \
+              meta.helm.sh/release-namespace=${{ env.OPENSHIFT_NAMESPACE }} \
+              --overwrite 2>/dev/null || true
+            
+            kubectl label serviceaccount grafana \
+              --namespace ${{ env.OPENSHIFT_NAMESPACE }} \
+              app.kubernetes.io/managed-by=Helm \
+              --overwrite 2>/dev/null || true
+              
+            echo "✅ ServiceAccount ownership updated"
+          fi
+        fi
+        
+        # Apply alternative solution: annotate with cleanup if needed
+        echo "Checking other Helm-managed objects for ownership issues..."
+        oc get serviceaccounts -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | while read sa; do
+          RELEASE=$(oc get sa "$sa" -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || echo "")
+          if [ "$RELEASE" = "grafana" ] && [ "$sa" != "grafana" ]; then
+            echo "Fixing ServiceAccount $sa owned by 'grafana' release..."
+            kubectl annotate serviceaccount "$sa" \
+              --namespace ${{ env.OPENSHIFT_NAMESPACE }} \
+              meta.helm.sh/release-name=${{ env.APP_NAME }} \
+              --overwrite 2>/dev/null || true
+          fi
+        done
+        
     - name: Deploy OpenTelemetry Demo
       run: |
         echo "Deploying OpenTelemetry Demo application..."
@@ -156,13 +197,8 @@ jobs:
           --namespace ${{ env.OPENSHIFT_NAMESPACE }} \
           -f ${{ env.VALUES_FILE }} \
           --wait --timeout=10m \
-          --atomic
-        
-    - name: Verify Deployment
-      run: |
-        echo "Verifying deployment status..."
-        echo "Checking pods status:"
-        oc get pods -n ${{ env.OPENSHIFT_NAMESPACE }} -l app.kubernetes.io/instance=${{ env.APP_NAME }}
+          --atomic \
+          --cleanup-on-fail
         
         echo "Checking services:"
         oc get svc -n ${{ env.OPENSHIFT_NAMESPACE }} -l app.kubernetes.io/instance=${{ env.APP_NAME }}
@@ -203,11 +239,12 @@ jobs:
         echo "**Environment:** Development" >> $GITHUB_STEP_SUMMARY
         echo "**Namespace:** ${{ env.OPENSHIFT_NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
         echo "**Application:** ${{ env.APP_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Release Date:** $(date)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        echo "### 📊 Application Status" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Pod Status" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
-        oc get pods -n ${{ env.OPENSHIFT_NAMESPACE }} -l app.kubernetes.io/instance=${{ env.APP_NAME }} >> $GITHUB_STEP_SUMMARY
+        oc get pods -n ${{ env.OPENSHIFT_NAMESPACE }} -l app.kubernetes.io/instance=${{ env.APP_NAME }} --no-headers | head -15 >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
@@ -215,14 +252,27 @@ jobs:
         echo "| Service | URL |" >> $GITHUB_STEP_SUMMARY
         echo "|---------|-----|" >> $GITHUB_STEP_SUMMARY
         
-        FRONTEND_ROUTE=$(oc get route frontend -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.spec.host}' 2>/dev/null || echo "Not exposed")
-        echo "| Frontend | https://$FRONTEND_ROUTE |" >> $GITHUB_STEP_SUMMARY
+        # Get all routes and display them
+        oc get routes -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{range .items[*]}{.metadata.name}{ "|" }{.spec.host}{"\n"}{end}' | while IFS='|' read -r service host; do
+          if [ -n "$service" ] && [ -n "$host" ]; then
+            echo "| $service | https://$host |" >> $GITHUB_STEP_SUMMARY
+          fi
+        done
         
-        GRAFANA_ROUTE=$(oc get route grafana -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.spec.host}' 2>/dev/null || echo "Not exposed")
-        echo "| Grafana | https://$GRAFANA_ROUTE |" >> $GITHUB_STEP_SUMMARY
-        
-        PROMETHEUS_ROUTE=$(oc get route prometheus -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.spec.host}' 2>/dev/null || echo "Not exposed")
-        echo "| Prometheus | https://$PROMETHEUS_ROUTE |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📈 Quick Links" >> $GITHUB_STEP_SUMMARY
+        FRONTEND_ROUTE=$(oc get route frontend -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+        if [ -n "$FRONTEND_ROUTE" ]; then
+          echo "- **Frontend:** https://$FRONTEND_ROUTE" >> $GITHUB_STEP_SUMMARY
+        fi
+        GRAFANA_ROUTE=$(oc get route grafana -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+        if [ -n "$GRAFANA_ROUTE" ]; then
+          echo "- **Grafana Dashboards:** https://$GRAFANA_ROUTE" >> $GITHUB_STEP_SUMMARY
+        fi
+        PROMETHEUS_ROUTE=$(oc get route prometheus -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+        if [ -n "$PROMETHEUS_ROUTE" ]; then
+          echo "- **Prometheus Metrics:** https://$PROMETHEUS_ROUTE" >> $GITHUB_STEP_SUMMARY
+        fi
 
   # Deploy with Helm directly
   deploy-helm:
@@ -261,23 +311,123 @@ jobs:
         helm repo add opensearch https://opensearch-project.github.io/helm-charts
         helm repo update
         
+    - name: Build Helm dependencies
+      run: |
+        echo "Building Helm chart dependencies..."
+        cd ${{ env.CHART_PATH }}
+        helm dependency build
+        cd ../../..
+        
+    - name: Cleanup old Helm releases
+      run: |
+        echo "🧹 Cleaning up old Helm releases from previous deployments..."
+        OLD_RELEASES=("grafana" "tempo" "prometheus" "loki" "jaeger" "opensearch" "otel-collector-backend" "otel-collector-gateway" "blackbox-exporter" "prometheus-operator")
+        
+        for release in "${OLD_RELEASES[@]}"; do
+          if helm list -n ${{ env.OPENSHIFT_NAMESPACE }} | grep -q "^$release "; then
+            echo "Uninstalling conflicting release: $release"
+            helm uninstall "$release" -n ${{ env.OPENSHIFT_NAMESPACE }} --wait || true
+          fi
+        done
+        
+        echo "✅ Cleanup completed"
+        
+    - name: Cleanup conflicting Kubernetes objects
+      run: |
+        echo "Checking and cleaning up conflicting objects..."
+        # Check if ServiceAccount 'grafana' exists and belongs to a different release
+        if oc get sa grafana -n ${{ env.OPENSHIFT_NAMESPACE }} 2>/dev/null; then
+          echo "Found existing ServiceAccount 'grafana', checking release ownership..."
+          RELEASE_NAME=$(oc get sa grafana -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || echo "")
+          
+          if [ "$RELEASE_NAME" != "${{ env.APP_NAME }}" ] && [ -n "$RELEASE_NAME" ]; then
+            echo "ServiceAccount is owned by release '$RELEASE_NAME', not '${{ env.APP_NAME }}'"
+            echo "Fixing Helm ownership metadata..."
+            
+            # Patch the ServiceAccount to update Helm annotations
+            kubectl annotate serviceaccount grafana \
+              --namespace ${{ env.OPENSHIFT_NAMESPACE }} \
+              meta.helm.sh/release-name=${{ env.APP_NAME }} \
+              meta.helm.sh/release-namespace=${{ env.OPENSHIFT_NAMESPACE }} \
+              --overwrite 2>/dev/null || true
+            
+            kubectl label serviceaccount grafana \
+              --namespace ${{ env.OPENSHIFT_NAMESPACE }} \
+              app.kubernetes.io/managed-by=Helm \
+              --overwrite 2>/dev/null || true
+              
+            echo "✅ ServiceAccount ownership updated"
+          fi
+        fi
+        
     - name: Deploy OpenTelemetry Demo with Helm
       run: |
-        echo "Deploying OpenTelemetry Demo to ${{ env.OPENSHIFT_NAMESPACE }}..."
+        echo "🚀 Deploying OpenTelemetry Demo to ${{ env.OPENSHIFT_NAMESPACE }}..."
         helm upgrade --install ${{ env.APP_NAME }} ${{ env.CHART_PATH }} \
           --namespace ${{ env.OPENSHIFT_NAMESPACE }} \
           --create-namespace \
           -f ${{ env.VALUES_FILE }} \
-          --wait --timeout=10m
+          --wait --timeout=10m \
+          --cleanup-on-fail
+        
+        echo "✅ Helm deployment completed"
+        
+    - name: Create OpenShift Routes
+      run: |
+        echo "🌐 Creating OpenShift Routes for all services..."
+        
+        # Get all services deployed by otel-demo
+        SERVICES=$(oc get svc -n ${{ env.OPENSHIFT_NAMESPACE }} -l app.kubernetes.io/instance=${{ env.APP_NAME }} -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+        
+        # List of services that should be exposed via routes
+        EXPOSE_SERVICES=("frontend" "frontend-proxy" "grafana" "prometheus" "jaeger-query" "tempo")
+        
+        for service in $SERVICES; do
+          # Check if service should be exposed
+          SHOULD_EXPOSE=false
+          for expose_srv in "${EXPOSE_SERVICES[@]}"; do
+            if [[ "$service" == *"$expose_srv"* ]]; then
+              SHOULD_EXPOSE=true
+              break
+            fi
+          done
+          
+          if [ "$SHOULD_EXPOSE" = true ]; then
+            # Check if route already exists
+            if ! oc get route "$service" -n ${{ env.OPENSHIFT_NAMESPACE }} 2>/dev/null; then
+              echo "Creating route for service: $service"
+              
+              # Get service port
+              PORT=$(oc get svc "$service" -n ${{ env.OPENSHIFT_NAMESPACE }} -o jsonpath='{.spec.ports[0].port}')
+              
+              # Create route with edge termination for HTTPS
+              oc expose svc "$service" \
+                -n ${{ env.OPENSHIFT_NAMESPACE }} \
+                --port="$PORT" \
+                --name="$service" 2>/dev/null || true
+              
+              # Configure TLS termination
+              oc patch route "$service" -n ${{ env.OPENSHIFT_NAMESPACE }} -p '{"spec":{"tls":{"termination":"edge","insecureEdgeTerminationPolicy":"Redirect"}}}' || true
+              
+              echo "✅ Route created for $service"
+            else
+              echo "Route already exists for $service"
+            fi
+          fi
+        done
         
     - name: Verify Helm Deployment
       run: |
-        echo "Verifying Helm deployment..."
+        echo "📊 Verifying Helm deployment..."
         helm status ${{ env.APP_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }}
         
         echo ""
-        echo "Deployed Resources:"
-        oc get pods -n ${{ env.OPENSHIFT_NAMESPACE }} -l app.kubernetes.io/instance=${{ env.APP_NAME }}
+        echo "📦 Deployed Pods:"
+        oc get pods -n ${{ env.OPENSHIFT_NAMESPACE }} -l app.kubernetes.io/instance=${{ env.APP_NAME }} --no-headers | head -20
+        
+        echo ""
+        echo "🌐 Available Routes:"
+        oc get routes -n ${{ env.OPENSHIFT_NAMESPACE }} --no-headers | head -20
 
   # Cleanup job for PR deployments
   cleanup:

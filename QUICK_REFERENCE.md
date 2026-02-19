@@ -6,6 +6,7 @@
 |-------|-----------|----------|
 | **Rate Limiter Timeout** | Helm timeout too short (5m) for multi-service deployment | ✅ Increased to 10m + added --atomic flag |
 | **SecurityContext Warnings** | Container-level fields at wrong YAML level | ✅ Reordered securityContext in ocp-values.yaml |
+| **ServiceAccount Ownership Conflict** | Grafana fullnameOverride="grafana" causes metadata conflicts with previous releases | ✅ Added automatic ServiceAccount metadata patching in GitHub workflow |
 
 ---
 
@@ -16,37 +17,59 @@
    └─ Fixed securityContext field ordering
 
 ✅ .github/workflows/deploy-openshift.yml
-   └─ Increased Helm timeout to 10m
-   └─ Added --atomic flag for better error handling
+   ├─ Increased Helm timeout to 10m
+   ├─ Added --atomic flag for better error handling
+   ├─ Added --cleanup-on-fail for safe rollback
+   ├─ Added automatic ServiceAccount metadata patching pre-deploy step
    └─ Added new deploy-argocd job for GitOps deployment
 
 ✅ .github/workflows/test-argocd.yml (NEW)
    └─ Comprehensive ArgoCD test workflow
+
+✅ HELM_SERVICEACCOUNT_FIX.md (NEW)
+   └─ Complete troubleshooting guide for ServiceAccount conflicts
 ```
 
 ---
 
-## 🚀 Quick Commands
+## 🚀 Deployment Commands
 
-### Verify Fixes
+### Trigger GitHub Actions Workflow (Recommended)
 ```bash
-# Check timeout increase
-grep "timeout=" .github/workflows/deploy-openshift.yml
-
-# Verify securityContext fix
-grep -A5 "securityContext:" charts/opentelemetry-demo/ocp-values.yaml
-```
-
-### Deploy with Helm (Fast)
-```bash
-# Trigger workflow
+# Automatically cleans up old releases, deploys new config, creates routes
 gh workflow run deploy-openshift.yml -f environment=dev
+
+# Or via Git push (triggers automatically)
+git push origin main
 ```
 
-### Deploy with ArgoCD (GitOps)
+### Manual Deployment
 ```bash
-# Part of main workflow, or view status
-oc get application otel-demo -n argocd
+# Cleanup old Helm releases
+chmod +x scripts/cleanup-releases.sh
+./scripts/cleanup-releases.sh pokamr-dev
+
+# Deploy with Helm
+helm upgrade --install otel-demo ./charts/opentelemetry-demo \
+  --namespace pokamr-dev \
+  -f ./charts/opentelemetry-demo/ocp-values.yaml \
+  --wait --timeout=10m --cleanup-on-fail
+
+# Create OpenShift Routes
+chmod +x scripts/create-routes.sh
+./scripts/create-routes.sh pokamr-dev dev
+```
+
+### View Deployment Status
+```bash
+# Check Helm release
+helm status otel-demo -n pokamr-dev
+
+# Check pods
+oc get pods -n pokamr-dev -l app.kubernetes.io/instance=otel-demo
+
+# View available routes
+oc get routes -n pokamr-dev
 ```
 
 ### Test ArgoCD
@@ -160,6 +183,7 @@ Create these in: **Settings → Environments**
 
 ## 📞 Support Commands
 
+### Deployment Status
 ```bash
 # View workflow runs
 gh run list --workflow=deploy-openshift.yml
@@ -176,6 +200,25 @@ oc get application -n argocd -w
 # Check recent events
 oc get events -n pokamr-dev --sort-by='.lastTimestamp'
 ```
+
+### 🔧 Quick Fixes
+
+#### ServiceAccount Ownership Conflict (if automatic fix fails)
+```bash
+# Fix Grafana ServiceAccount ownership
+oc login --token=<YOUR_TOKEN> --server=https://api.rm1.0a51.p1.openshiftapps.com:6443
+oc project pokamr-dev
+
+kubectl annotate serviceaccount grafana \
+  meta.helm.sh/release-name=otel-demo \
+  meta.helm.sh/release-namespace=pokamr-dev \
+  --overwrite
+
+# Retry deployment
+gh workflow run deploy-openshift.yml -f environment=dev
+```
+
+**Detailed troubleshooting:** See [HELM_SERVICEACCOUNT_FIX.md](HELM_SERVICEACCOUNT_FIX.md)
 
 ---
 
